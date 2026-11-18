@@ -193,6 +193,22 @@ model Setting {
   updatedAt DateTime @updatedAt
 }
 
+/// A 6-digit sign-in code sent by email. The code itself is never stored, only its hash.
+/// `authToken` is the long random Auth.js token the code unlocks; it never leaves the server.
+model LoginCode {
+  id        String    @id @default(cuid())
+  /// Lower-case email address the code was sent to.
+  email     String
+  codeHash  String
+  authToken String
+  attempts  Int       @default(0)
+  expires   DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([email, createdAt])
+}
+
 // ---- Auth.js tables ----
 
 model Account {

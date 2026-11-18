@@ -13,7 +13,7 @@ export type TestDb = ReturnType<typeof makeDb>;
 
 export async function resetDb(db: TestDb) {
   await db.$executeRawUnsafe(
-    `TRUNCATE "AuditLog", "Reservation", "UsageEvent", "Message", "Conversation", "Session", "Account", "VerificationToken", "Setting", "User", "Business" CASCADE`,
+    `TRUNCATE "AuditLog", "Reservation", "UsageEvent", "Message", "Conversation", "Session", "Account", "VerificationToken", "LoginCode", "Setting", "User", "Business" CASCADE`,
   );
 }
 

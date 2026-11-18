@@ -54,3 +54,7 @@ next-env.d.ts
 
 # local Claude Code launch config (machine-specific paths)
 /.claude/
+
+# end-to-end test scratch (outbox, database URL)
+/.e2e/
+/.mail-outbox/

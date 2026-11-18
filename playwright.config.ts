@@ -4,7 +4,8 @@ const PORT = Number(process.env.E2E_PORT ?? 3100);
 
 export default defineConfig({
   testDir: "tests/e2e",
-  fullyParallel: false,
+  // One worker: tests share one database and mail outbox.
+  workers: 1,
   retries: process.env.CI ? 1 : 0,
   use: {
     baseURL: `http://localhost:${PORT}`,
@@ -15,9 +16,11 @@ export default defineConfig({
     { name: "mobile", use: { ...devices["Pixel 7"] } },
   ],
   webServer: {
-    command: `npm run build && npx next start -p ${PORT}`,
-    url: `http://localhost:${PORT}`,
-    reuseExistingServer: !process.env.CI,
-    timeout: 240_000,
+    // Builds the app, then starts a throwaway database and the app (see scripts/e2e-server.ts).
+    command: `npm run build && npx tsx scripts/e2e-server.ts`,
+    url: `http://localhost:${PORT}/signin`,
+    reuseExistingServer: false,
+    timeout: 300_000,
+    env: { E2E_PORT: String(PORT) },
   },
 });
