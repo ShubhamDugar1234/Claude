@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { emailFor, signIn } from "./helpers";
+import { emailFor, signInOnce } from "./helpers";
 
 async function openMenuIfMobile(page: Page) {
   const menu = page.getByRole("button", { name: "Open menu" });
@@ -14,7 +14,7 @@ async function send(page: Page, text: string) {
 test("chat: send a message, see the streamed reply with its cost, and find it again", async ({
   page,
 }, testInfo) => {
-  await signIn(page, emailFor(testInfo, "chat"));
+  await signInOnce(page, emailFor(testInfo, "chat"));
   await expect(page).toHaveURL(/\/chat$/);
   await expect(page.getByText(/USD 0\.00 of USD 10\.00 used this month/)).toBeVisible();
 
@@ -42,7 +42,7 @@ test("chat: send a message, see the streamed reply with its cost, and find it ag
 });
 
 test("chat: rename and delete a conversation", async ({ page }, testInfo) => {
-  await signIn(page, emailFor(testInfo, "chat"));
+  await signInOnce(page, emailFor(testInfo, "chat"));
   await send(page, "Temporary question about tractors");
   await expect(page.getByTestId("usage-line")).toBeVisible();
 
@@ -60,7 +60,7 @@ test("chat: rename and delete a conversation", async ({ page }, testInfo) => {
 });
 
 test("chat: the Stop button ends a reply early", async ({ page }, testInfo) => {
-  await signIn(page, emailFor(testInfo, "chat"));
+  await signInOnce(page, emailFor(testInfo, "chat"));
   await send(page, "MOCK_SLOW please");
   await expect(page.getByText("word3")).toBeVisible();
   await page.getByRole("button", { name: "Stop" }).click();
@@ -70,13 +70,13 @@ test("chat: the Stop button ends a reply early", async ({ page }, testInfo) => {
 });
 
 test("chat: a failed reply shows a plain message", async ({ page }, testInfo) => {
-  await signIn(page, emailFor(testInfo, "chat"));
+  await signInOnce(page, emailFor(testInfo, "chat"));
   await send(page, "MOCK_ERROR");
   await expect(page.getByText("Claude is very busy at the moment.")).toBeVisible();
 });
 
 test("chat: a user over their cap sees why and can't send", async ({ page }, testInfo) => {
-  await signIn(page, emailFor(testInfo, "capped"));
+  await signInOnce(page, emailFor(testInfo, "capped"));
   await expect(
     page
       .getByRole("alert")

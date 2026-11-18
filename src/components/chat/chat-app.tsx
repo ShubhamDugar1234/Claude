@@ -2,6 +2,10 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { ChatStreamEvent } from "@/lib/chat/service";
+
+// Mirrors the server limits in lib/attachments (which can't be imported into the browser).
+const MAX_FILES = 5;
+const MAX_FILE_BYTES = 20 * 1024 * 1024;
 import { Brand } from "@/components/brand";
 import { AllowanceMeter } from "./allowance-meter";
 import { Composer } from "./composer";
@@ -63,6 +67,8 @@ export function ChatApp(props: Props) {
     (savedModel && props.models.some((m) => m.id === savedModel) ? savedModel : props.defaultModel);
   const router = useRouter();
   const [input, setInput] = useState("");
+  const [files, setFiles] = useState<File[]>([]);
+  const [dragging, setDragging] = useState(false);
   const [streaming, setStreaming] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -96,6 +102,21 @@ export function ChatApp(props: Props) {
     setToast(msg);
     setTimeout(() => setToast(null), 5000);
   }, []);
+
+  function addFiles(added: File[]) {
+    const ok = /\.(pdf|png|jpe?g|gif|webp|xlsx|csv)$/i;
+    const bad = added.find((f) => !ok.test(f.name));
+    if (bad)
+      return showToast(
+        `"${bad.name}" isn't supported. Attach PDFs, images, Excel (.xlsx) or CSV files.`,
+      );
+    const big = added.find((f) => f.size > MAX_FILE_BYTES);
+    if (big) return showToast(`"${big.name}" is larger than 20 MB.`);
+    if (files.length + added.length > MAX_FILES) {
+      showToast(`You can attach up to ${MAX_FILES} files per message.`);
+    }
+    setFiles((current) => [...current, ...added].slice(0, MAX_FILES));
+  }
 
   const updateAssistant = (id: string, patch: (m: ChatMessage) => Partial<ChatMessage>) =>
     setMessages((ms) => ms.map((m) => (m.id === id ? { ...m, ...patch(m) } : m)));
@@ -142,12 +163,14 @@ export function ChatApp(props: Props) {
 
   async function send() {
     const text = input.trim();
-    if (!text || streaming || blocked) return;
+    const sending = files;
+    if ((!text && sending.length === 0) || streaming || blocked) return;
     const userMsg: ChatMessage = {
       id: `local-user-${Date.now()}`,
       role: "user",
       text,
       usage: null,
+      attachments: sending.map((f) => ({ name: f.name, kind: "", converted: false })),
     };
     const pendingId = `local-reply-${Date.now()}`;
     const pending: ChatMessage = {
@@ -159,6 +182,7 @@ export function ChatApp(props: Props) {
     };
     setMessages((ms) => [...ms, userMsg, pending]);
     setInput("");
+    setFiles([]);
     setStreaming(true);
     stickToBottom.current = true;
 
@@ -168,16 +192,24 @@ export function ChatApp(props: Props) {
     let conversationId = activeId;
 
     try {
-      const r = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ conversationId, model, message: text }),
-        signal: controller.signal,
-      });
+      const form = new FormData();
+      if (conversationId) form.set("conversationId", conversationId);
+      form.set("model", model);
+      form.set("message", text);
+      for (const f of sending) form.append("files", f);
+      const r = await fetch("/api/chat", { method: "POST", body: form, signal: controller.signal });
       if (!r.ok || !r.body) {
         const err = await r
           .json()
           .catch(() => ({ error: "Something went wrong. Please try again." }));
+        if (r.status === 400 && sending.length > 0) {
+          // A file was refused: give the message and files back so the user can fix it.
+          setMessages((ms) => ms.filter((m) => m.id !== userMsg.id && m.id !== replyId));
+          setInput(text);
+          setFiles(sending);
+          showToast(err.error);
+          return;
+        }
         updateAssistant(replyId, () => ({ streaming: false, error: err.error }));
         if (r.status === 401) router.push("/signin");
         return;
@@ -192,6 +224,21 @@ export function ChatApp(props: Props) {
               ...cs,
             ]);
             window.history.replaceState(null, "", `/chat/${event.id}`);
+            break;
+          case "converted":
+            setMessages((ms) =>
+              ms.map((m) =>
+                m.id === userMsg.id
+                  ? {
+                      ...m,
+                      attachments: m.attachments?.map((a) => ({
+                        ...a,
+                        converted: a.converted || event.names.includes(a.name),
+                      })),
+                    }
+                  : m,
+              ),
+            );
             break;
           case "text":
             updateAssistant(replyId, (m) => ({ text: m.text + event.text, status: null }));
@@ -216,6 +263,7 @@ export function ChatApp(props: Props) {
             // Nothing was sent to Claude: put the message back in the box.
             setMessages((ms) => ms.filter((m) => m.id !== userMsg.id && m.id !== replyId));
             setInput(text);
+            setFiles(sending);
             if (event.allowance) setAllowance(event.allowance);
             if (!event.lasting) showToast(event.message);
             else if (!event.allowance?.block) showToast(event.message);
@@ -303,7 +351,22 @@ export function ChatApp(props: Props) {
         </div>
       )}
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div
+        className={`relative flex min-w-0 flex-1 flex-col ${dragging ? "bg-brand/5" : ""}`}
+        onDragOver={(e) => {
+          if (blocked || streaming || !e.dataTransfer.types.includes("Files")) return;
+          e.preventDefault();
+          setDragging(true);
+        }}
+        onDragLeave={(e) => {
+          if (e.currentTarget === e.target) setDragging(false);
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragging(false);
+          if (!blocked && !streaming) addFiles(Array.from(e.dataTransfer.files));
+        }}
+      >
         <header className="flex items-center gap-3 border-b border-neutral-200 px-3 py-2.5 sm:px-4">
           <button
             type="button"
@@ -377,6 +440,9 @@ export function ChatApp(props: Props) {
         <Composer
           value={input}
           onChange={setInput}
+          files={files}
+          onAddFiles={addFiles}
+          onRemoveFile={(i) => setFiles((fs) => fs.filter((_, j) => j !== i))}
           onSend={send}
           onStop={() => abortRef.current?.abort()}
           streaming={streaming}

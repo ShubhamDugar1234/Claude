@@ -44,3 +44,14 @@ export const CloseIcon = () => (
     <path d="M6 6l12 12M18 6L6 18" />
   </svg>
 );
+export const PaperclipIcon = () => (
+  <svg {...base} aria-hidden="true">
+    <path d="M21 11.5l-8.6 8.6a5 5 0 01-7.1-7.1l8.6-8.6a3.5 3.5 0 015 5l-8.6 8.6a2 2 0 01-2.8-2.8l7.9-7.9" />
+  </svg>
+);
+export const FileIcon = () => (
+  <svg {...base} width={14} height={14} aria-hidden="true">
+    <path d="M14 3H6a1 1 0 00-1 1v16a1 1 0 001 1h12a1 1 0 001-1V8l-5-5z" />
+    <path d="M14 3v5h5" />
+  </svg>
+);

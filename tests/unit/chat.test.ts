@@ -119,3 +119,27 @@ describe("error messages", () => {
     expect(new Set(kinds.map(friendlyError)).size).toBe(kinds.length);
   });
 });
+
+describe("token estimate when counting fails", () => {
+  it("adds a generous allowance for each uploaded PDF and image", async () => {
+    const { fallbackTokenEstimate } = await import("@/lib/chat/service");
+    const text = fallbackTokenEstimate(
+      [],
+      [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+    );
+    const withFiles = fallbackTokenEstimate(
+      [],
+      [
+        {
+          role: "user",
+          content: [
+            { type: "document", source: { type: "file", file_id: "f1" } },
+            { type: "image", source: { type: "file", file_id: "f2" } },
+            { type: "text", text: "hi" },
+          ],
+        },
+      ],
+    );
+    expect(withFiles - text).toBeGreaterThanOrEqual(205_000);
+  });
+});

@@ -13,6 +13,7 @@ export interface ChatMessage {
   role: "user" | "assistant";
   text: string;
   usage: { inputTokens: number; outputTokens: number; cost: string } | null;
+  attachments?: { name: string; kind: string; converted: boolean }[];
   /** Client-only state while a reply is arriving or after it ended early. */
   streaming?: boolean;
   status?: string | null;

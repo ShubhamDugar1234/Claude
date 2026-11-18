@@ -39,3 +39,23 @@ export async function signIn(page: Page, email: string) {
   await page.getByLabel("6-digit code").fill(await latestCode(email, sentAfter));
   await page.getByRole("button", { name: "Sign in" }).click();
 }
+
+// Sessions saved per address, so tests don't hit the 5-codes-per-hour limit by signing in
+// again and again (all tests run in one worker, so this is shared across files).
+const sessions = new Map<
+  string,
+  Awaited<ReturnType<import("@playwright/test").BrowserContext["cookies"]>>
+>();
+
+/** Signs in once per address, then reuses that session in later tests. */
+export async function signInOnce(page: Page, email: string) {
+  const saved = sessions.get(email);
+  if (saved) {
+    await page.context().addCookies(saved);
+    await page.goto("/chat");
+    return;
+  }
+  await signIn(page, email);
+  await page.waitForURL(/\/(chat|welcome|pending)/);
+  sessions.set(email, await page.context().cookies());
+}

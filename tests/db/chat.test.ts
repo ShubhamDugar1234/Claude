@@ -7,6 +7,8 @@ import {
   renameConversation,
 } from "@/lib/chat/conversations";
 import { createMockClaude } from "@/lib/claude/mock";
+import { prepareAttachments, type PreparedAttachment } from "@/lib/attachments";
+import { makeXlsx, TINY_PDF, TINY_PNG } from "../fixtures/make-xlsx";
 import type { ClaudeClient, ClaudeRequest, ClaudeResult } from "@/lib/claude/types";
 import { createBusiness, createUser, makeDb, resetDb, TEST_LIMITS, type TestDb } from "./helpers";
 
@@ -39,6 +41,7 @@ async function turn(
     model?: string;
     claude?: ClaudeClient;
     signal?: AbortSignal;
+    attachments?: PreparedAttachment[];
   } = {},
 ) {
   const events: ChatStreamEvent[] = [];
@@ -48,8 +51,8 @@ async function turn(
       userId,
       conversationId: opts.conversationId ?? null,
       model: opts.model ?? SONNET,
-      content: [{ type: "text", text }],
       text,
+      attachments: opts.attachments,
       signal: opts.signal,
     },
     (e) => events.push(e),
@@ -58,12 +61,25 @@ async function turn(
 }
 
 /** A client that records requests and returns a fixed result. */
-function spyClient(result: Partial<ClaudeResult> = {}, opts: { countFails?: boolean } = {}) {
+function spyClient(
+  result: Partial<ClaudeResult> = {},
+  opts: { countFails?: boolean; uploadFails?: boolean } = {},
+) {
   const requests: ClaudeRequest[] = [];
+  const uploads: string[] = [];
+  const deleted: string[] = [];
   const client: ClaudeClient = {
     async countTokens() {
       if (opts.countFails) throw new Error("count failed");
       return 1_000;
+    },
+    async uploadFile({ name }) {
+      uploads.push(name);
+      if (opts.uploadFails) throw new Error("upload failed");
+      return `file_${uploads.length}`;
+    },
+    async deleteFile(id) {
+      deleted.push(id);
     },
     async stream(req, onEvent) {
       requests.push(req);
@@ -77,7 +93,7 @@ function spyClient(result: Partial<ClaudeResult> = {}, opts: { countFails?: bool
       };
     },
   };
-  return { client, requests };
+  return { client, requests, uploads, deleted };
 }
 
 describe("a chat turn", () => {
@@ -239,7 +255,6 @@ describe("blocked and failed turns", () => {
         userId: u.id,
         conversationId: null,
         model: SONNET,
-        content: [{ type: "text", text: "MOCK_SLOW" }],
         text: "MOCK_SLOW",
         signal: controller.signal,
       },
@@ -269,7 +284,6 @@ describe("blocked and failed turns", () => {
         userId: u.id,
         conversationId: null,
         model: SONNET,
-        content: [{ type: "text", text: "hi" }],
         text: "hi",
       },
       (e) => events.push(e),
@@ -305,7 +319,7 @@ describe("conversations are private to their owner", () => {
 
     expect(await getConversationForDisplay(db, u.id, theirConv.id)).toBeNull();
     expect(await renameConversation(db, u.id, theirConv.id, "hijacked")).toBe(false);
-    expect(await deleteConversation(db, u.id, theirConv.id)).toBe(false);
+    expect(await deleteConversation(db, u.id, theirConv.id)).toBeNull();
     expect(await db.message.count({ where: { conversationId: theirConv.id } })).toBe(2);
   });
 
@@ -315,7 +329,7 @@ describe("conversations are private to their owner", () => {
     const conv = events.find((e) => e.type === "conversation");
     if (conv?.type !== "conversation") throw new Error("no conversation");
     const before = await db.usageEvent.count({ where: { conversationId: conv.id } });
-    expect(await deleteConversation(db, u.id, conv.id)).toBe(true);
+    expect(await deleteConversation(db, u.id, conv.id)).toEqual([]);
     expect(await db.message.count({ where: { conversationId: conv.id } })).toBe(0);
     const row = await db.conversation.findUniqueOrThrow({ where: { id: conv.id } });
     expect(row.title).toBe("");
@@ -332,5 +346,124 @@ describe("conversations are private to their owner", () => {
     const view = await getConversationForDisplay(db, u.id, conv.id);
     expect(view?.messages[0]).toMatchObject({ role: "user", text: "hello", usage: null });
     expect(view?.messages[1].usage?.outputTokens).toBeGreaterThan(0);
+  });
+});
+
+describe("attachments", () => {
+  it("uploads PDFs and images, sends converted spreadsheets as text, and says so", async () => {
+    const { u } = await setup();
+    const attachments = await prepareAttachments([
+      { name: "report.pdf", bytes: TINY_PDF },
+      { name: "photo.png", bytes: TINY_PNG },
+      {
+        name: "sales.xlsx",
+        bytes: makeXlsx([
+          {
+            name: "S",
+            rows: [
+              ["Branch", "Units"],
+              ["Butwal", 42],
+            ],
+          },
+        ]),
+      },
+    ]);
+    const spy = spyClient();
+    const events = await turn(u.id, "Compare these", { claude: spy.client, attachments });
+
+    expect(spy.uploads).toEqual(["report.pdf", "photo.png"]);
+    const sent = spy.requests[0].messages.at(-1)!.content as {
+      type: string;
+      source?: { type: string; file_id?: string; data?: string };
+      title?: string;
+      text?: string;
+    }[];
+    expect(sent.map((b) => b.type)).toEqual(["document", "image", "document", "text"]);
+    expect(sent[0]).toMatchObject({
+      source: { type: "file", file_id: "file_1" },
+      title: "report.pdf",
+    });
+    expect(sent[1]).toMatchObject({ source: { type: "file", file_id: "file_2" } });
+    expect(sent[2]).toMatchObject({
+      source: { type: "text", data: "Branch,Units\nButwal,42" },
+      title: "sales.xlsx (converted to CSV)",
+    });
+    expect(sent[3]).toMatchObject({ text: "Compare these" });
+    expect(events.find((e) => e.type === "converted")).toEqual({
+      type: "converted",
+      names: ["sales.xlsx"],
+    });
+
+    const userMsg = await db.message.findFirstOrThrow({ where: { role: "USER" } });
+    expect(userMsg.attachments).toEqual([
+      { name: "report.pdf", kind: "pdf", converted: false, sizeBytes: TINY_PDF.length },
+      { name: "photo.png", kind: "image", converted: false, sizeBytes: TINY_PNG.length },
+      { name: "sales.xlsx", kind: "spreadsheet", converted: true, sizeBytes: expect.any(Number) },
+    ]);
+  });
+
+  it("names a new chat after the first file when there's no text", async () => {
+    const { u } = await setup();
+    const attachments = await prepareAttachments([{ name: "budget.pdf", bytes: TINY_PDF }]);
+    const events = await turn(u.id, "", { claude: spyClient().client, attachments });
+    expect(events.find((e) => e.type === "conversation")).toMatchObject({ title: "budget.pdf" });
+  });
+
+  it("deletes uploaded files when the request is blocked", async () => {
+    const { u, b } = await setup({ cap: "1" });
+    await db.usageEvent.create({
+      data: {
+        userId: u.id,
+        businessId: b.id,
+        requestedModel: SONNET,
+        model: SONNET,
+        costUsd: "1",
+        status: "OK",
+      },
+    });
+    const spy = spyClient();
+    const attachments = await prepareAttachments([{ name: "report.pdf", bytes: TINY_PDF }]);
+    const events = await turn(u.id, "read this", { claude: spy.client, attachments });
+    expect(events.find((e) => e.type === "blocked")).toBeDefined();
+    expect(spy.deleted).toEqual(["file_1"]);
+  });
+
+  it("explains a failed upload without reserving or charging", async () => {
+    const { u } = await setup();
+    const spy = spyClient({}, { uploadFails: true });
+    const attachments = await prepareAttachments([{ name: "report.pdf", bytes: TINY_PDF }]);
+    const events = await turn(u.id, "read this", { claude: spy.client, attachments });
+    expect(events.at(-1)).toMatchObject({
+      type: "error",
+      message: expect.stringContaining("couldn't be sent"),
+    });
+    expect(await db.reservation.count()).toBe(0);
+  });
+
+  it("deleting a chat returns its uploaded file ids so they can be removed", async () => {
+    const { u } = await setup();
+    const attachments = await prepareAttachments([
+      { name: "a.pdf", bytes: TINY_PDF },
+      { name: "b.png", bytes: TINY_PNG },
+    ]);
+    const events = await turn(u.id, "files", { claude: spyClient().client, attachments });
+    const conv = events.find((e) => e.type === "conversation");
+    if (conv?.type !== "conversation") throw new Error("no conversation");
+    expect((await deleteConversation(db, u.id, conv.id))?.sort()).toEqual(["file_1", "file_2"]);
+  });
+
+  it("shows attachment names in the user's own history", async () => {
+    const { u } = await setup();
+    const attachments = await prepareAttachments([
+      { name: "list.csv", bytes: Buffer.from("a,b\n1,2") },
+    ]);
+    const events = await turn(u.id, "check", { attachments });
+    const conv = events.find((e) => e.type === "conversation");
+    if (conv?.type !== "conversation") throw new Error("no conversation");
+    const view = await getConversationForDisplay(db, u.id, conv.id);
+    expect(view?.messages[0].attachments).toEqual([
+      { name: "list.csv", kind: "csv", converted: true },
+    ]);
+    expect(view?.messages[0].text).toBe("check");
   });
 });

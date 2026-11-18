@@ -6,9 +6,10 @@
 // - Usage records never contain message text; errors are logged by code only.
 import type { PrismaClient } from "@/generated/prisma/client";
 import type {
-  BetaUserMessageParam,
+  BetaContentBlockParam,
   BetaWebSearchTool20260209,
 } from "@anthropic-ai/sdk/resources/beta/messages/messages";
+import { attachmentMeta, type PreparedAttachment } from "@/lib/attachments";
 import { getLimits, type Limits } from "@/config/limits";
 import { isModelId, MODELS } from "@/config/models";
 import { DEFAULT_SYSTEM_PROMPT, SYSTEM_PROMPT_SETTING_KEY } from "@/config/prompts";
@@ -32,6 +33,8 @@ export const MAX_MESSAGE_CHARS = 100_000;
 /** Events sent to the browser over SSE. */
 export type ChatStreamEvent =
   | { type: "conversation"; id: string; title: string }
+  /** Spreadsheets that were converted to CSV text before sending. */
+  | { type: "converted"; names: string[] }
   | { type: "text"; text: string }
   | { type: "status"; status: "searching" }
   | {
@@ -54,10 +57,10 @@ export interface ChatTurnInput {
   userId: string;
   conversationId: string | null;
   model: string;
-  /** The user's message as API content blocks (text, and later documents/images). */
-  content: BetaUserMessageParam["content"];
-  /** Plain text of the message, for the title and token estimate fallback. */
+  /** What the user typed. May be empty when files are attached. */
   text: string;
+  /** Checked and prepared files (see lib/attachments). */
+  attachments?: PreparedAttachment[];
   signal?: AbortSignal;
 }
 
@@ -69,7 +72,7 @@ export interface ChatDeps {
   now?: () => Date;
 }
 
-export function friendlyError(kind: ClaudeErrorKind | "missing_key"): string {
+export function friendlyError(kind: ClaudeErrorKind | "missing_key" | "upload_failed"): string {
   switch (kind) {
     case "rate_limit":
       return "Claude is getting too many requests right now. Please wait a minute and try again.";
@@ -84,6 +87,8 @@ export function friendlyError(kind: ClaudeErrorKind | "missing_key"): string {
       return "The portal's connection to Claude isn't set up correctly. Please tell the ED's office.";
     case "aborted":
       return "Stopped.";
+    case "upload_failed":
+      return "Your file couldn't be sent to Claude. Please try again.";
     default:
       return "Something went wrong while Claude was replying. Please try again.";
   }
@@ -102,6 +107,26 @@ function stopNotice(stopReason: string | null, shortened: boolean): string | nul
     default:
       return null;
   }
+}
+
+/**
+ * Safe upper bound on prompt tokens when the counting endpoint is unavailable: one token per
+ * byte of text, plus a generous allowance for each uploaded PDF or image (whose size in tokens
+ * depends on pages and resolution).
+ */
+export function fallbackTokenEstimate(system: unknown, messages: BetaMessageParam[]): number {
+  const PDF_ALLOWANCE = 200_000;
+  const IMAGE_ALLOWANCE = 5_000;
+  let files = 0;
+  for (const m of messages) {
+    if (!Array.isArray(m.content)) continue;
+    for (const b of m.content) {
+      if ((b.type === "document" || b.type === "image") && b.source.type === "file") {
+        files += b.type === "document" ? PDF_ALLOWANCE : IMAGE_ALLOWANCE;
+      }
+    }
+  }
+  return upperBoundTokensForText(JSON.stringify([system, messages])) + files;
 }
 
 async function systemPromptBase(db: PrismaClient): Promise<string> {
@@ -151,7 +176,59 @@ export async function runChatTurn(
     history = toApiMessages(rows);
   }
 
-  const messages: BetaMessageParam[] = [...history, { role: "user", content: input.content }];
+  let claude: ClaudeClient | null = null;
+  try {
+    if (user.business) claude = deps.claudeFor(user.business.apiKeyEnvVar);
+  } catch {
+    console.error("[chat] no Anthropic API key configured for business");
+  }
+
+  // The new user message: attached files first (as Anthropic recommends), then the text.
+  const attachments = input.attachments ?? [];
+  const uploadedFileIds: string[] = [];
+  const content: BetaContentBlockParam[] = [];
+  if (attachments.some((a) => a.upload)) {
+    if (!claude) return fail(friendlyError("missing_key"));
+    try {
+      for (const a of attachments) {
+        if (!a.upload) continue;
+        uploadedFileIds.push(
+          await claude.uploadFile({
+            bytes: a.upload.bytes,
+            name: a.name,
+            mediaType: a.upload.mediaType,
+          }),
+        );
+      }
+    } catch {
+      console.error("[chat] attachment upload failed");
+      await Promise.allSettled(uploadedFileIds.map((id) => claude!.deleteFile(id)));
+      return fail(friendlyError("upload_failed"));
+    }
+  }
+  let nextUpload = 0;
+  for (const a of attachments) {
+    if (a.upload) {
+      const fileId = uploadedFileIds[nextUpload++];
+      content.push(
+        a.kind === "pdf"
+          ? { type: "document", source: { type: "file", file_id: fileId }, title: a.name }
+          : { type: "image", source: { type: "file", file_id: fileId } },
+      );
+    } else if (a.text !== undefined) {
+      content.push({
+        type: "document",
+        source: { type: "text", media_type: "text/plain", data: a.text },
+        title: `${a.name} (converted to CSV)`,
+      });
+    }
+  }
+  if (input.text.trim()) content.push({ type: "text", text: input.text });
+  if (content.length === 0) return fail("Please type a message.");
+  const discardUploads = () =>
+    Promise.allSettled(uploadedFileIds.map((id) => claude!.deleteFile(id))).then(() => undefined);
+
+  const messages: BetaMessageParam[] = [...history, { role: "user", content }];
   const system = user.business
     ? buildSystemPrompt({
         basePrompt: await systemPromptBase(db),
@@ -173,13 +250,6 @@ export async function runChatTurn(
       ]
     : [];
 
-  let claude: ClaudeClient | null = null;
-  try {
-    if (user.business) claude = deps.claudeFor(user.business.apiKeyEnvVar);
-  } catch {
-    console.error("[chat] no Anthropic API key configured for business");
-  }
-
   // Prompt size for the worst-case reservation: exact count, or a safe upper bound.
   let inputTokens: number;
   try {
@@ -194,7 +264,7 @@ export async function runChatTurn(
       userId: input.userId,
     });
   } catch {
-    inputTokens = upperBoundTokensForText(JSON.stringify([system, messages]));
+    inputTokens = fallbackTokenEstimate(system, messages);
   }
 
   const reservation = await reserve(
@@ -210,6 +280,7 @@ export async function runChatTurn(
     limits,
   );
   if (!reservation.ok) {
+    await discardUploads();
     await recordBlocked(db, {
       userId: input.userId,
       businessId: reservation.businessId,
@@ -266,7 +337,7 @@ export async function runChatTurn(
     }
 
     if (!conversationId) {
-      const title = titleFromText(input.text);
+      const title = titleFromText(input.text.trim() ? input.text : (attachments[0]?.name ?? ""));
       const created = await db.conversation.create({
         data: { userId: input.userId, title, model: input.model },
         select: { id: true },
@@ -275,8 +346,18 @@ export async function runChatTurn(
       emit({ type: "conversation", id: created.id, title });
     }
     await db.message.create({
-      data: { conversationId, role: "USER", content: input.content as object },
+      data: {
+        conversationId,
+        role: "USER",
+        content: content as object[],
+        attachments:
+          attachments.length > 0
+            ? (attachments.map(attachmentMeta) as unknown as object[])
+            : undefined,
+      },
     });
+    const converted = attachments.filter((a) => a.converted).map((a) => a.name);
+    if (converted.length > 0) emit({ type: "converted", names: converted });
 
     let result;
     try {
@@ -323,7 +404,7 @@ export async function runChatTurn(
     }
 
     // A refused reply may be partial; keep only its finished text.
-    const content: BetaContentBlock[] =
+    const replyContent: BetaContentBlock[] =
       result.stopReason === "refusal" ? textBlocksOnly(result.content) : result.content;
     const s = await settleWith({ status: "OK", usage: result.usage, billedModel: result.model });
     if (s.unknownModel) console.error(`[chat] no price configured for model ${result.model}`);
@@ -332,7 +413,7 @@ export async function runChatTurn(
       data: {
         conversationId,
         role: "ASSISTANT",
-        content: content as object[],
+        content: replyContent as object[],
         usageEventId: s.usageEventId,
       },
       select: { id: true },

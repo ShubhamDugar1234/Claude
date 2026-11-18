@@ -1,5 +1,5 @@
 import "server-only";
-import Anthropic from "@anthropic-ai/sdk";
+import Anthropic, { toFile } from "@anthropic-ai/sdk";
 import type { BetaMessageParam } from "@anthropic-ai/sdk/resources/beta/messages/messages";
 import {
   ClaudeStreamError,
@@ -135,6 +135,21 @@ export function createRealClaude(apiKey: string): ClaudeClient {
       }
 
       return { content, usage: total!.usage, model: total!.model, stopReason };
+    },
+
+    async uploadFile({ bytes, name, mediaType }) {
+      const meta = await client.files.upload({
+        file: await toFile(bytes, name, { type: mediaType }),
+      });
+      return meta.id;
+    },
+
+    async deleteFile(fileId) {
+      try {
+        await client.files.delete(fileId);
+      } catch (err) {
+        if (!(err instanceof Anthropic.NotFoundError)) throw err;
+      }
     },
   };
 }

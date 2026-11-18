@@ -5,7 +5,8 @@ import type {
   BetaAssistantMessageParam,
   BetaUserMessageParam,
 } from "@anthropic-ai/sdk/resources/beta/messages/messages";
-import type { BetaContentBlock, BetaMessageParam } from "@/lib/claude/types";
+import type { BetaContentBlock, BetaMessageParam, ClaudeClient } from "@/lib/claude/types";
+import { fileIdsInContent } from "@/lib/attachments";
 import { formatCostShort, money } from "@/lib/money";
 
 type Db = PrismaClient;
@@ -83,6 +84,18 @@ export interface DisplayMessage {
   role: "user" | "assistant";
   text: string;
   usage: { inputTokens: number; outputTokens: number; cost: string } | null;
+  attachments: { name: string; kind: string; converted: boolean }[];
+}
+
+function attachmentsFor(value: unknown): DisplayMessage["attachments"] {
+  if (!Array.isArray(value)) return [];
+  return (value as { name?: unknown; kind?: unknown; converted?: unknown }[])
+    .filter((a) => typeof a?.name === "string")
+    .map((a) => ({
+      name: String(a.name),
+      kind: String(a.kind ?? ""),
+      converted: a.converted === true,
+    }));
 }
 
 /** Messages for the chat screen, with the usage line for each reply. Owner only. */
@@ -92,7 +105,7 @@ export async function getConversationForDisplay(db: Db, userId: string, id: stri
   const rows = await db.message.findMany({
     where: { conversationId: id, conversation: { userId } },
     orderBy: { createdAt: "asc" },
-    select: { id: true, role: true, content: true, usageEventId: true },
+    select: { id: true, role: true, content: true, attachments: true, usageEventId: true },
   });
   const eventIds = rows.map((r) => r.usageEventId).filter((x): x is string => !!x);
   const events = await db.usageEvent.findMany({
@@ -113,6 +126,7 @@ export async function getConversationForDisplay(db: Db, userId: string, id: stri
       id: r.id,
       role: r.role === "USER" ? "user" : "assistant",
       text: messageText(r.content),
+      attachments: attachmentsFor(r.attachments),
       usage: e
         ? {
             inputTokens: e.inputTokens + e.cacheCreationTokens + e.cacheReadTokens,
@@ -135,17 +149,37 @@ export async function renameConversation(db: Db, userId: string, id: string, tit
 
 /**
  * Deletes a conversation's content: messages are removed and the title cleared. The row stays
- * (soft-deleted) so usage records keep their link for billing.
+ * (soft-deleted) so usage records keep their link for billing. Returns the Anthropic file ids
+ * the conversation used (so the caller can delete them there too), or null if not found.
  */
-export async function deleteConversation(db: Db, userId: string, id: string) {
+export async function deleteConversation(
+  db: Db,
+  userId: string,
+  id: string,
+): Promise<string[] | null> {
   return db.$transaction(async (tx) => {
     const own = await tx.conversation.findFirst({
       where: { id, userId, deletedAt: null },
       select: { id: true },
     });
-    if (!own) return false;
+    if (!own) return null;
+    const rows = await tx.message.findMany({
+      where: { conversationId: id },
+      select: { content: true },
+    });
     await tx.message.deleteMany({ where: { conversationId: id } });
     await tx.conversation.update({ where: { id }, data: { deletedAt: new Date(), title: "" } });
-    return true;
+    return rows.flatMap((r) => fileIdsInContent(r.content));
   });
+}
+
+/** Best effort: removes uploaded files from Anthropic. Failures are logged, never shown. */
+export async function deleteUploadedFiles(
+  client: ClaudeClient | null,
+  fileIds: string[],
+): Promise<void> {
+  if (!client || fileIds.length === 0) return;
+  const results = await Promise.allSettled(fileIds.map((id) => client.deleteFile(id)));
+  const failed = results.filter((r) => r.status === "rejected").length;
+  if (failed > 0) console.error(`[files] could not delete ${failed} uploaded file(s)`);
 }

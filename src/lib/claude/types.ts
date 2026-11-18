@@ -58,4 +58,8 @@ export interface ClaudeClient {
   /** Prompt size in tokens. Throws if counting isn't possible; the caller falls back to an upper bound. */
   countTokens(req: Omit<ClaudeRequest, "maxTokens" | "signal">): Promise<number>;
   stream(req: ClaudeRequest, onEvent: (e: ClaudeEvent) => void): Promise<ClaudeResult>;
+  /** Uploads a PDF or image to Anthropic's Files API (private to the account). Returns its file id. */
+  uploadFile(file: { bytes: Buffer; name: string; mediaType: string }): Promise<string>;
+  /** Deletes an uploaded file. Never throws for a file that's already gone. */
+  deleteFile(fileId: string): Promise<void>;
 }

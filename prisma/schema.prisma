@@ -114,6 +114,8 @@ model Message {
   role           MessageRole
   /// Anthropic content blocks, including thinking and compaction blocks.
   content        Json
+  /// Files attached to a user message: [{ name, kind, converted, sizeBytes }]. Owner only, like content.
+  attachments    Json?
   /// Links an assistant reply to its usage line ("1,240 in · 380 out · $0.006").
   usageEventId   String?      @unique
   createdAt      DateTime     @default(now())

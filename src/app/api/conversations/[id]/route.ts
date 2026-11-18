@@ -1,8 +1,10 @@
 import { db } from "@/lib/db";
 import { apiUser, jsonError } from "@/lib/api";
+import { getClaudeClient } from "@/lib/claude";
 import {
   cleanTitle,
   deleteConversation,
+  deleteUploadedFiles,
   getConversationForDisplay,
   renameConversation,
 } from "@/lib/chat/conversations";
@@ -34,7 +36,22 @@ export async function DELETE(request: Request, ctx: RouteContext<"/api/conversat
   const auth = await apiUser(request, { mutating: true });
   if ("response" in auth) return auth.response;
   const { id } = await ctx.params;
-  if (!(await deleteConversation(db, auth.user.id, id)))
-    return jsonError(404, "Conversation not found.");
+  const fileIds = await deleteConversation(db, auth.user.id, id);
+  if (fileIds === null) return jsonError(404, "Conversation not found.");
+  if (fileIds.length > 0) {
+    const business = auth.user.businessId
+      ? await db.business.findUnique({
+          where: { id: auth.user.businessId },
+          select: { apiKeyEnvVar: true },
+        })
+      : null;
+    let client = null;
+    try {
+      client = business ? getClaudeClient(business.apiKeyEnvVar) : null;
+    } catch {
+      // No key configured, so there's nothing to delete them with.
+    }
+    await deleteUploadedFiles(client, fileIds);
+  }
   return Response.json({ id, deleted: true });
 }

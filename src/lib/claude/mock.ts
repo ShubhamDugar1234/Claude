@@ -1,6 +1,15 @@
 // A fake Claude for development and tests (MOCK_ANTHROPIC=true). No network calls, no cost.
 // Messages containing MOCK_ERROR fail part-way; MOCK_SLOW streams slowly (for testing Stop).
+import { createHash } from "node:crypto";
 import { ClaudeStreamError, type ClaudeClient, type ClaudeRequest } from "@/lib/claude/types";
+
+function lastUserAttachments(req: Pick<ClaudeRequest, "messages">): string[] {
+  const last = [...req.messages].reverse().find((m) => m.role === "user");
+  if (!last || typeof last.content === "string") return [];
+  return last.content.flatMap((b) =>
+    b.type === "document" ? [b.title ?? "document"] : b.type === "image" ? ["image"] : [],
+  );
+}
 
 function lastUserText(req: Pick<ClaudeRequest, "messages">): string {
   const last = [...req.messages].reverse().find((m) => m.role === "user");
@@ -34,11 +43,17 @@ export function createMockClaude(): ClaudeClient {
 
     async stream(req, onEvent) {
       const said = lastUserText(req).replace(/\s+/g, " ").slice(0, 80);
+      const files = lastUserAttachments(req);
+      const filesNote =
+        files.length > 0
+          ? `\n\nI received ${files.length} attachment(s): ${files.join(", ")}.`
+          : "";
       const slow = said.includes("MOCK_SLOW");
       const reply = slow
         ? Array.from({ length: 60 }, (_, i) => `word${i + 1}`).join(" ")
         : `This is a **mock reply** from ${req.model}. You said: "${said}"\n\n` +
-          "```js\nconsole.log('hello from the mock');\n```";
+          "```js\nconsole.log('hello from the mock');\n```" +
+          filesNote;
       const words = reply.split(/(?<= )/);
       const inputTokens = Math.ceil(promptBytes(req) / 4);
       let sent = "";
@@ -75,5 +90,11 @@ export function createMockClaude(): ClaudeClient {
         stopReason: "end_turn",
       };
     },
+
+    async uploadFile({ bytes }) {
+      return `file_mock_${createHash("sha256").update(bytes).digest("hex").slice(0, 16)}`;
+    },
+
+    async deleteFile() {},
   };
 }
