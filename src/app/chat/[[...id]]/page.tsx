@@ -1,6 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import { db } from "@/lib/db";
 import { requireUser } from "@/lib/session";
+import { scopeFor } from "@/lib/admin/scope";
 import { DEFAULT_MODEL, MODEL_IDS, MODELS } from "@/config/models";
 import { getConversationForDisplay, listConversations } from "@/lib/chat/conversations";
 import { getAllowance } from "@/lib/limits/allowance";
@@ -36,7 +37,7 @@ export default async function ChatPage({ params }: PageProps<"/chat/[[...id]]">)
 
   return (
     <ChatApp
-      user={{ name: user.name, businessName: user.businessName }}
+      user={{ name: user.name, businessName: user.businessName, isAdmin: scopeFor(user) !== null }}
       initialConversations={conversations.map((c) => ({
         ...c,
         updatedAt: c.updatedAt.toISOString(),

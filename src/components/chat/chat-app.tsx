@@ -15,7 +15,7 @@ import { Sidebar } from "./sidebar";
 import type { Allowance, ChatMessage, ConversationSummary, ModelOption } from "./types";
 
 interface Props {
-  user: { name: string; businessName: string | null };
+  user: { name: string; businessName: string | null; isAdmin: boolean };
   initialConversations: ConversationSummary[];
   initialConversationId: string | null;
   initialMessages: ChatMessage[];
@@ -327,6 +327,11 @@ export function ChatApp(props: Props) {
           <div className="min-w-0">
             <p className="truncate font-medium">{props.user.name}</p>
             <p className="truncate text-xs text-neutral-500">{props.user.businessName}</p>
+            {props.user.isAdmin && (
+              <a href="/admin" className="text-xs text-brand underline-offset-2 hover:underline">
+                Admin
+              </a>
+            )}
           </div>
           {props.signOut}
         </div>

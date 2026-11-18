@@ -69,6 +69,13 @@ async function main() {
           noticeAcceptedAt: new Date(),
         },
         {
+          email: `e2e.${p}.limit@mvdugar.com`,
+          name: `Lal Limit ${p}`,
+          businessId: mahindra.id,
+          monthlyCapUsd: "0.03",
+          noticeAcceptedAt: new Date(),
+        },
+        {
           email: `e2e.${p}.gone@mvdugar.com`,
           name: "Gone Person",
           businessId: mahindra.id,
@@ -87,6 +94,19 @@ async function main() {
         requestedModel: "claude-sonnet-5-5",
         model: "claude-sonnet-5-5",
         costUsd: "0.01",
+        status: "OK",
+      },
+    });
+  }
+  // The "limit" users have room for exactly one more reply (see tests/e2e/limits.spec.ts).
+  for (const u of await db.user.findMany({ where: { email: { contains: ".limit@" } } })) {
+    await db.usageEvent.create({
+      data: {
+        userId: u.id,
+        businessId: mahindra.id,
+        requestedModel: "claude-sonnet-5-5",
+        model: "claude-sonnet-5-5",
+        costUsd: "0.0075",
         status: "OK",
       },
     });

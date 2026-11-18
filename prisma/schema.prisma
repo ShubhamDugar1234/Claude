@@ -180,12 +180,15 @@ model AuditLog {
   /// "User" | "Business" | "Setting"
   targetType String
   targetId   String
+  /// Business the change belongs to, so business admins see their own business's entries.
+  businessId String?
   before     Json?
   after      Json?
   createdAt  DateTime @default(now())
 
   @@index([createdAt])
   @@index([targetType, targetId])
+  @@index([businessId, createdAt])
 }
 
 /// Super-admin-editable settings: system prompt, retention days, default cap.

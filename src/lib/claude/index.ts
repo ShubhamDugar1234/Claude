@@ -3,8 +3,9 @@ import { createMockClaude } from "@/lib/claude/mock";
 import { createRealClaude } from "@/lib/claude/real";
 import type { ClaudeClient } from "@/lib/claude/types";
 
-/** Only names like ANTHROPIC_API_KEY or ANTHROPIC_API_KEY_MAHINDRA may hold Anthropic keys. */
-export const API_KEY_ENV_PATTERN = /^ANTHROPIC_API_KEY(_[A-Z0-9_]+)?$/;
+import { API_KEY_ENV_PATTERN } from "@/lib/claude/key-pattern";
+
+export { API_KEY_ENV_PATTERN };
 
 export class MissingApiKeyError extends Error {
   constructor(public readonly envVar: string) {
