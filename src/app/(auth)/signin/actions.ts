@@ -3,6 +3,7 @@ import { signIn } from "@/auth";
 import { db } from "@/lib/db";
 import { normalizeEmail } from "@/lib/auth/email-policy";
 import { canSendCode, cleanCode, verifyLoginCode } from "@/lib/auth/login-codes";
+import { clientIpHash } from "@/lib/auth/client-ip";
 import { checkSignIn, refusalMessage } from "@/lib/auth/sign-in-policy";
 
 export interface SignInState {
@@ -20,15 +21,17 @@ export async function requestCode(_prev: SignInState, formData: FormData): Promi
   if (!decision.ok) return { step: "email", email: typed, error: refusalMessage(decision.reason) };
 
   const { email } = decision;
-  if (!(await canSendCode(db, email))) {
+  if (!(await canSendCode(db, email, new Date(), await clientIpHash()))) {
     return { step: "email", email, error: refusalMessage("send_limit") };
   }
   try {
     await signIn("nodemailer", { email, redirect: false, redirectTo: "/chat" });
   } catch (e) {
+    // Log only the error's short code: mail server messages can include the address.
+    const failure = (e as { code?: unknown })?.code;
     console.error(
       "[auth] sending sign-in code failed:",
-      e instanceof Error ? e.message : "unknown error",
+      typeof failure === "string" ? failure : "unknown",
     );
     return { step: "email", email, error: refusalMessage("send_failed") };
   }

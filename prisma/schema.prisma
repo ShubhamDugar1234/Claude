@@ -206,12 +206,15 @@ model LoginCode {
   email     String
   codeHash  String
   authToken String
+  /// Hash of the requester's IP address (never the address itself), for the per-network limit.
+  ipHash    String?
   attempts  Int       @default(0)
   expires   DateTime
   usedAt    DateTime?
   createdAt DateTime  @default(now())
 
   @@index([email, createdAt])
+  @@index([ipHash, createdAt])
 }
 
 // ---- Auth.js tables ----

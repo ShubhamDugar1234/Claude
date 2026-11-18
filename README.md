@@ -2,7 +2,7 @@
 
 Internal web app that gives MV Dugar Group staff private access to Claude through the company's Anthropic API key, with per-person monthly caps and per-business budgets.
 
-> **Status: under construction (milestone M5, admin).** The full setup guide for non-developers arrives in milestone M7. See `SPEC.md` for the requirements and `PLAN.md` for the build plan.
+> **Status: under construction (milestone M6, hardening).** The full setup guide for non-developers arrives in milestone M7. See `SPEC.md` for the requirements and `PLAN.md` for the build plan.
 
 ## Developer quick start
 

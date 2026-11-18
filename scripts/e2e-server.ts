@@ -133,6 +133,7 @@ async function main() {
         ALLOW_TEST_MAIL_TRANSPORT: "true",
         // Fake Claude: no network calls or cost in tests.
         MOCK_ANTHROPIC: "true",
+        CRON_SECRET: "e2e-cron-secret-0123456789",
         ALLOW_MOCK_ANTHROPIC: "true",
       },
     },

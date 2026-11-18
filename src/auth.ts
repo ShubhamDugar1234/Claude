@@ -7,6 +7,7 @@ import { portalAdapter } from "@/lib/auth/adapter";
 import { codeEmail } from "@/lib/auth/code-email";
 import { companyDomain, googleAuthEnabled, normalizeEmail } from "@/lib/auth/email-policy";
 import { CODE_TTL_MS, issueLoginCode } from "@/lib/auth/login-codes";
+import { clientIpHash } from "@/lib/auth/client-ip";
 import { checkSignIn } from "@/lib/auth/sign-in-policy";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
@@ -31,7 +32,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       // Auth.js hands us its long random token. We keep it server-side and email a 6-digit
       // code instead; the code only unlocks the token after passing the attempt limits.
       async sendVerificationRequest({ identifier, token }) {
-        const code = await issueLoginCode(db, { email: identifier, authToken: token });
+        const code = await issueLoginCode(db, {
+          email: identifier,
+          authToken: token,
+          ipHash: await clientIpHash().catch(() => null),
+        });
         await sendMail(codeEmail(identifier, code));
       },
     }),

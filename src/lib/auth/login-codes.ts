@@ -7,6 +7,8 @@ import type { PrismaClient } from "@/generated/prisma/client";
 export const CODE_TTL_MS = 10 * 60 * 1000;
 export const MAX_ATTEMPTS_PER_CODE = 5;
 export const MAX_CODES_PER_HOUR = 5;
+/** Codes one network (IP address) can request per hour, across all addresses. */
+export const MAX_CODES_PER_IP_PER_HOUR = 20;
 
 type Db = PrismaClient;
 
@@ -31,16 +33,25 @@ export function cleanCode(input: string): string | null {
   return /^\d{6}$/.test(digits) ? digits : null;
 }
 
-export async function canSendCode(db: Db, email: string, now = new Date()): Promise<boolean> {
-  const recent = await db.loginCode.count({
-    where: { email, createdAt: { gt: new Date(now.getTime() - 60 * 60 * 1000) } },
-  });
-  return recent < MAX_CODES_PER_HOUR;
+export async function canSendCode(
+  db: Db,
+  email: string,
+  now = new Date(),
+  ipHash: string | null = null,
+): Promise<boolean> {
+  const hourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+  const recent = await db.loginCode.count({ where: { email, createdAt: { gt: hourAgo } } });
+  if (recent >= MAX_CODES_PER_HOUR) return false;
+  if (ipHash) {
+    const fromIp = await db.loginCode.count({ where: { ipHash, createdAt: { gt: hourAgo } } });
+    if (fromIp >= MAX_CODES_PER_IP_PER_HOUR) return false;
+  }
+  return true;
 }
 
 export async function issueLoginCode(
   db: Db,
-  input: { email: string; authToken: string; now?: Date },
+  input: { email: string; authToken: string; ipHash?: string | null; now?: Date },
 ): Promise<string> {
   const now = input.now ?? new Date();
   const code = generateCode();
@@ -49,6 +60,7 @@ export async function issueLoginCode(
       email: input.email,
       codeHash: hashCode(input.email, code),
       authToken: input.authToken,
+      ipHash: input.ipHash ?? null,
       expires: new Date(now.getTime() + CODE_TTL_MS),
       createdAt: now,
     },

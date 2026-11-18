@@ -399,7 +399,8 @@ export async function runChatTurn(
         });
       }
       await db.conversation.update({ where: { id: conversationId }, data: { model: input.model } });
-      if (e.kind !== "aborted") console.error(`[chat] Claude call failed: ${e.code}`);
+      const errorType = e.code; // a short code such as "overloaded_error", never content
+      if (e.kind !== "aborted") console.error(`[chat] Claude call failed: ${errorType}`);
       return fail(friendlyError(e.kind));
     }
 

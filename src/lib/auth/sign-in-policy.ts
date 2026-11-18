@@ -34,7 +34,7 @@ export function refusalMessage(reason: SignInRefusal | "send_limit" | "send_fail
     case "deactivated":
       return "This account has been deactivated. Ask your manager or the ED's office if you need access again.";
     case "send_limit":
-      return "Too many codes have been sent to this address. Please wait an hour and try again.";
+      return "Too many codes have been requested. Please wait an hour and try again.";
     case "send_failed":
       return "We couldn't send the email just now. Please try again in a few minutes.";
   }
