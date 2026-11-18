@@ -1,0 +1,56 @@
+{
+  "name": "mv-dugar-ai-portal",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "prisma generate && next build",
+    "start": "next start",
+    "lint": "eslint && prettier --check .",
+    "format": "prettier --write .",
+    "typecheck": "next typegen && tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "postinstall": "prisma generate"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "7.10.1",
+    "@prisma/client": "7.10.1",
+    "next": "16.4.6",
+    "pg": "8.23.1",
+    "prisma": "7.10.1",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "server-only": "0.0.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.65.1",
+    "@tailwindcss/turbopack": "4.3.3",
+    "@types/node": "24.19.2",
+    "@types/pg": "8.23.1",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "dotenv": "18.0.10",
+    "eslint": "^9",
+    "eslint-config-next": "16.4.6",
+    "eslint-config-prettier": "10.1.8",
+    "prettier": "3.10.1",
+    "tailwindcss": "4.3.3",
+    "tsx": "4.23.15",
+    "typescript": "^5",
+    "vitest": "5.1.1"
+  },
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "allowScripts": {
+    "prisma@7.10.1": true,
+    "@prisma/engines@7.10.1": true,
+    "esbuild@0.28.2": true,
+    "fsevents": false
+  }
+}

@@ -1,0 +1,231 @@
+// MV Dugar AI Portal database schema.
+// Money is always Decimal. All timestamps are stored in UTC.
+// PRIVACY: Message is the only table holding chat content. No admin code may read it.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  STAFF
+  BUSINESS_ADMIN
+  SUPER_ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  PAUSED
+  PENDING
+  DEACTIVATED
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+}
+
+enum UsageStatus {
+  OK
+  BLOCKED
+  ERROR
+  ABORTED
+}
+
+enum ReservationStatus {
+  OPEN
+  SETTLED
+  EXPIRED
+}
+
+model Business {
+  id                String   @id @default(cuid())
+  name              String   @unique
+  monthlyBudgetUsd  Decimal  @db.Decimal(12, 4)
+  /// Model ids this business may use, e.g. ["claude-sonnet-5-5", "claude-haiku-5-5"]
+  allowedModels     String[]
+  webSearchEnabled  Boolean  @default(false)
+  /// Name of the env var holding this business's Anthropic key. Must match ^ANTHROPIC_API_KEY(_[A-Z0-9_]+)?$
+  apiKeyEnvVar      String   @default("ANTHROPIC_API_KEY")
+  extraSystemPrompt String?
+  active            Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  users        User[]
+  usageEvents  UsageEvent[]
+  reservations Reservation[]
+}
+
+model User {
+  id               String     @id @default(cuid())
+  name             String
+  /// Always stored lower-case.
+  email            String     @unique
+  emailVerified    DateTime?
+  /// Null only while status is PENDING.
+  businessId       String?
+  business         Business?  @relation(fields: [businessId], references: [id])
+  role             Role       @default(STAFF)
+  monthlyCapUsd    Decimal    @db.Decimal(12, 4)
+  status           UserStatus @default(ACTIVE)
+  noticeAcceptedAt DateTime?
+  lastActiveAt     DateTime?
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+
+  accounts      Account[]
+  sessions      Session[]
+  conversations Conversation[]
+  usageEvents   UsageEvent[]
+  reservations  Reservation[]
+  auditActions  AuditLog[]     @relation("AuditActor")
+
+  @@index([businessId])
+}
+
+model Conversation {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  /// Last model used in this conversation.
+  model     String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  /// Soft delete for the list; message rows are hard-deleted at the same time.
+  deletedAt DateTime?
+
+  messages    Message[]
+  usageEvents UsageEvent[]
+
+  @@index([userId, updatedAt])
+}
+
+/// PRIVATE: only ever read through owner-scoped queries. No admin route selects this model.
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           MessageRole
+  /// Anthropic content blocks, including thinking and compaction blocks.
+  content        Json
+  /// Links an assistant reply to its usage line ("1,240 in · 380 out · $0.006").
+  usageEventId   String?      @unique
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId, createdAt])
+}
+
+/// Billing metadata only. Never add content fields here.
+model UsageEvent {
+  id                  String        @id @default(cuid())
+  userId              String
+  user                User          @relation(fields: [userId], references: [id])
+  businessId          String
+  business            Business      @relation(fields: [businessId], references: [id])
+  conversationId      String?
+  conversation        Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  /// The model the user picked.
+  requestedModel      String
+  /// The model Anthropic actually billed (can differ on a refusal fallback).
+  model               String
+  inputTokens         Int           @default(0)
+  outputTokens        Int           @default(0)
+  cacheCreationTokens Int           @default(0)
+  cacheReadTokens     Int           @default(0)
+  webSearchCount      Int           @default(0)
+  costUsd             Decimal       @db.Decimal(14, 8)
+  status              UsageStatus
+  /// e.g. "rate_limit_error", "user_cap_reached". Never contains message text.
+  errorCode           String?
+  durationMs          Int           @default(0)
+  createdAt           DateTime      @default(now())
+
+  @@index([businessId, createdAt])
+  @@index([userId, createdAt])
+}
+
+model Reservation {
+  id           String            @id @default(cuid())
+  userId       String
+  user         User              @relation(fields: [userId], references: [id])
+  businessId   String
+  business     Business          @relation(fields: [businessId], references: [id])
+  /// Worst-case cost of the request being made.
+  amountUsd    Decimal           @db.Decimal(14, 8)
+  status       ReservationStatus @default(OPEN)
+  createdAt    DateTime          @default(now())
+  /// createdAt + 10 minutes. Open reservations past this are ignored.
+  expiresAt    DateTime
+  settledAt    DateTime?
+  usageEventId String?           @unique
+
+  @@index([userId, status, expiresAt])
+  @@index([businessId, status, expiresAt])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String
+  actor      User     @relation("AuditActor", fields: [actorId], references: [id])
+  /// e.g. "user.cap_changed", "user.paused", "business.budget_changed"
+  action     String
+  /// "User" | "Business" | "Setting"
+  targetType String
+  targetId   String
+  before     Json?
+  after      Json?
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([targetType, targetId])
+}
+
+/// Super-admin-editable settings: system prompt, retention days, default cap.
+model Setting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}
+
+// ---- Auth.js tables ----
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expires      DateTime
+}
+
+model VerificationToken {
+  identifier String
+  /// Stored hashed by Auth.js.
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
