@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   calculateCost,
+  calculateRequestCost,
   calculateCostSafe,
   maxAffordableOutputTokens,
   UnknownModelPricingError,
@@ -286,5 +287,66 @@ describe("money formatting", () => {
 
   it("refuses fractional JavaScript numbers", () => {
     expect(() => money(0.1)).toThrow();
+  });
+});
+
+describe("multi-step requests (usage.iterations)", () => {
+  it("uses top-level usage when there are no iterations", () => {
+    const c = calculateRequestCost("claude-sonnet-5-5", "claude-sonnet-5-5", {
+      input_tokens: 1_240,
+      output_tokens: 380,
+      iterations: null,
+    });
+    expect(c.total.toString()).toBe("0.00628");
+    expect(c.inputTokens).toBe(1_240);
+  });
+
+  it("sums compaction and message steps, pricing compaction at the requested model", () => {
+    const c = calculateRequestCost("claude-sonnet-5-5", "claude-sonnet-5-5", {
+      // Top-level covers only the final step; it must not be added again.
+      input_tokens: 1_000,
+      output_tokens: 500,
+      iterations: [
+        { type: "compaction", input_tokens: 150_000, output_tokens: 2_000 },
+        { type: "message", model: "claude-sonnet-5-5", input_tokens: 1_000, output_tokens: 500 },
+      ],
+    });
+    // compaction: 150,000 x $2 + 2,000 x $10 = 0.32; message: 0.002 + 0.005 = 0.007
+    expect(c.total.toString()).toBe("0.327");
+    expect(c.inputTokens).toBe(151_000);
+    expect(c.outputTokens).toBe(2_500);
+  });
+
+  it("prices Haiku's tier per step, not on the combined total", () => {
+    const c = calculateRequestCost("claude-haiku-5-5", "claude-haiku-5-5", {
+      input_tokens: 60_000,
+      output_tokens: 0,
+      iterations: [
+        { type: "message", model: "claude-haiku-5-5", input_tokens: 60_000, output_tokens: 0 },
+        { type: "message", model: "claude-haiku-5-5", input_tokens: 60_000, output_tokens: 0 },
+      ],
+    });
+    expect(c.total.toString()).toBe("0.012"); // 2 x 60,000 x $0.10, both in the cheap tier
+  });
+
+  it("prices a fallback step at the fallback model and counts web searches once", () => {
+    const c = calculateRequestCost("claude-sonnet-5-5", "claude-sonnet-5", {
+      input_tokens: 1_000,
+      output_tokens: 1_000,
+      server_tool_use: { web_search_requests: 2 },
+      iterations: [
+        { type: "message", model: "claude-sonnet-5-5", input_tokens: 1_000, output_tokens: 0 },
+        {
+          type: "fallback_message",
+          model: "claude-sonnet-5",
+          input_tokens: 1_000,
+          output_tokens: 1_000,
+        },
+      ],
+    });
+    // 0.002 + (0.002 + 0.01) + 2 searches x $0.01
+    expect(c.total.toString()).toBe("0.034");
+    expect(c.model).toBe("claude-sonnet-5");
+    expect(c.webSearches).toBe(2);
   });
 });

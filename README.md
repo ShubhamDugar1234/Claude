@@ -2,7 +2,7 @@
 
 Internal web app that gives MV Dugar Group staff private access to Claude through the company's Anthropic API key, with per-person monthly caps and per-business budgets.
 
-> **Status: under construction (milestone M2, sign-in).** The full setup guide for non-developers arrives in milestone M7. See `SPEC.md` for the requirements and `PLAN.md` for the build plan.
+> **Status: under construction (milestone M3, chat).** The full setup guide for non-developers arrives in milestone M7. See `SPEC.md` for the requirements and `PLAN.md` for the build plan.
 
 ## Developer quick start
 
@@ -21,3 +21,4 @@ npm run dev                                      # http://localhost:3000
 Checks: `npm run lint`, `npm run typecheck`, `npm test`, `npm run test:e2e`.
 
 In development, sign-in codes are printed in the terminal running `npm run dev`.
+Set `MOCK_ANTHROPIC="true"` in `.env` to chat with a free fake Claude while developing.

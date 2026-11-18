@@ -49,13 +49,16 @@ test("staff sign in with an emailed code, accept the notice once, and sign out",
   await page.getByRole("button", { name: "I understand, let's start" }).click();
 
   await expect(page).toHaveURL(/\/chat$/);
-  await expect(page.getByRole("heading", { name: "Signed in as Asha Staff" })).toBeVisible();
+  await expect(page.getByLabel("Message")).toBeVisible();
+  await expect(page.getByText("USD 0.00 of USD 10.00 used this month")).toBeVisible();
 
   // The notice isn't shown again.
   await page.goto("/welcome");
   await expect(page).toHaveURL(/\/chat$/);
 
-  await page.getByRole("button", { name: "Sign out" }).click();
+  const menu = page.getByRole("button", { name: "Open menu" });
+  if (await menu.isVisible()) await menu.click();
+  await page.getByRole("button", { name: "Sign out" }).last().click();
   await expect(page).toHaveURL(/\/signin$/);
   await page.goto("/chat");
   await expect(page).toHaveURL(/\/signin$/);

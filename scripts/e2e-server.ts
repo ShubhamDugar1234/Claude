@@ -55,6 +55,20 @@ async function main() {
           monthlyCapUsd: "10",
         },
         {
+          email: `e2e.${p}.chat@mvdugar.com`,
+          name: "Chandra Chat",
+          businessId: mahindra.id,
+          monthlyCapUsd: "10",
+          noticeAcceptedAt: new Date(),
+        },
+        {
+          email: `e2e.${p}.capped@mvdugar.com`,
+          name: "Kamal Capped",
+          businessId: mahindra.id,
+          monthlyCapUsd: "0.01",
+          noticeAcceptedAt: new Date(),
+        },
+        {
           email: `e2e.${p}.gone@mvdugar.com`,
           name: "Gone Person",
           businessId: mahindra.id,
@@ -62,6 +76,19 @@ async function main() {
           monthlyCapUsd: "10",
         },
       ],
+    });
+  }
+  // The capped users have already used their whole allowance this month.
+  for (const capped of await db.user.findMany({ where: { email: { contains: ".capped@" } } })) {
+    await db.usageEvent.create({
+      data: {
+        userId: capped.id,
+        businessId: mahindra.id,
+        requestedModel: "claude-sonnet-5-5",
+        model: "claude-sonnet-5-5",
+        costUsd: "0.01",
+        status: "OK",
+      },
     });
   }
   await db.$disconnect();
@@ -84,6 +111,9 @@ async function main() {
         MAIL_TRANSPORT: "file",
         MAIL_OUTBOX_DIR: OUTBOX,
         ALLOW_TEST_MAIL_TRANSPORT: "true",
+        // Fake Claude: no network calls or cost in tests.
+        MOCK_ANTHROPIC: "true",
+        ALLOW_MOCK_ANTHROPIC: "true",
       },
     },
   );

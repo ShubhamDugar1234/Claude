@@ -145,6 +145,79 @@ export function calculateCostSafe(
   return { ...calculateCost(mostExpensiveModelId(), usage), model, unknownModel: true };
 }
 
+/** One step of a multi-step request (compaction, server-tool loop turn, or refusal fallback). */
+export interface ApiUsageIteration {
+  type: string;
+  /** The model that ran this step. Missing or null for compaction: it runs on the requested model. */
+  model?: string | null;
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_input_tokens?: number | null;
+  cache_read_input_tokens?: number | null;
+  cache_creation?: ApiUsage["cache_creation"];
+}
+
+export interface ApiUsageWithIterations extends ApiUsage {
+  iterations?: ApiUsageIteration[] | null;
+}
+
+export interface RequestCost {
+  /** The model billed for the final answer (the API's `model` field). */
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheCreationTokens: number;
+  cacheReadTokens: number;
+  webSearches: number;
+  total: Money;
+  /** True if any step used a model with no configured price (charged at the dearest price). */
+  unknownModel: boolean;
+}
+
+/**
+ * Cost of a whole request. When the API itemises steps in `usage.iterations` (compaction,
+ * server-tool loops, fallbacks), the top-level counts cover only the final step, so we sum
+ * the steps instead, each at its own model's price and price tier.
+ */
+export function calculateRequestCost(
+  requestedModel: string,
+  billedModel: string,
+  usage: ApiUsageWithIterations,
+): RequestCost {
+  const webSearches = nonNegInt(usage.server_tool_use?.web_search_requests, "web_search_requests");
+  const steps: { model: string; usage: ApiUsage }[] =
+    usage.iterations && usage.iterations.length > 0
+      ? usage.iterations.map((it) => ({
+          model: it.model || (it.type === "compaction" ? requestedModel : billedModel),
+          usage: it,
+        }))
+      : [{ model: billedModel, usage }];
+
+  let total = webSearchCost(webSearches);
+  let unknownModel = false;
+  const sums = { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 };
+  for (const step of steps) {
+    // Web searches are counted once at the top level, so strip them from each step.
+    const c = calculateCostSafe(step.model, { ...step.usage, server_tool_use: null });
+    total = total.plus(c.total);
+    unknownModel ||= c.unknownModel;
+    sums.input += step.usage.input_tokens;
+    sums.output += step.usage.output_tokens;
+    sums.cacheWrite += step.usage.cache_creation_input_tokens ?? 0;
+    sums.cacheRead += step.usage.cache_read_input_tokens ?? 0;
+  }
+  return {
+    model: billedModel,
+    inputTokens: sums.input,
+    outputTokens: sums.output,
+    cacheCreationTokens: sums.cacheWrite,
+    cacheReadTokens: sums.cacheRead,
+    webSearches,
+    total,
+    unknownModel,
+  };
+}
+
 export interface WorstCaseInput {
   /** Prompt size from the token counting endpoint, or a safe upper bound. */
   inputTokens: number;

@@ -4,8 +4,10 @@ import { expect, type Page, type TestInfo } from "@playwright/test";
 
 const OUTBOX = path.resolve(".e2e/outbox");
 
-export const emailFor = (testInfo: TestInfo, who: "staff" | "pending" | "gone") =>
-  `e2e.${testInfo.project.name}.${who}@mvdugar.com`;
+export const emailFor = (
+  testInfo: TestInfo,
+  who: "staff" | "pending" | "gone" | "chat" | "capped",
+) => `e2e.${testInfo.project.name}.${who}@mvdugar.com`;
 
 /** Waits for the newest sign-in email to this address and returns its 6-digit code. */
 export async function latestCode(to: string, after: number): Promise<string> {

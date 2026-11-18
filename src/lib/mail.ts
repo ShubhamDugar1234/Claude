@@ -1,7 +1,7 @@
 import "server-only";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import nodemailer from "nodemailer";
+import { createTransport } from "nodemailer";
 
 export interface MailMessage {
   to: string;
@@ -28,12 +28,12 @@ function transportKind(): TransportKind {
   return kind;
 }
 
-let smtp: nodemailer.Transporter | null = null;
+let smtp: ReturnType<typeof createTransport> | null = null;
 
-function smtpTransport(): nodemailer.Transporter {
+function smtpTransport(): ReturnType<typeof createTransport> {
   if (!smtp) {
     const port = Number(process.env.SMTP_PORT || 587);
-    smtp = nodemailer.createTransport({
+    smtp = createTransport({
       host: process.env.SMTP_HOST,
       port,
       // Port 465 uses TLS from the start; 587 upgrades with STARTTLS (required, not optional).

@@ -15,10 +15,10 @@ import type { TransactionClient } from "@/generated/prisma/internal/prismaNamesp
 import type { UsageStatus } from "@/generated/prisma/enums";
 import { getLimits, type Limits } from "@/config/limits";
 import {
-  calculateCostSafe,
+  calculateRequestCost,
   maxAffordableOutputTokens,
   worstCaseCost,
-  type ApiUsage,
+  type ApiUsageWithIterations,
 } from "@/lib/cost";
 import { minMoney, money, roundForStorage, type Money } from "@/lib/money";
 import { billingPeriod, type BillingPeriod } from "@/lib/period";
@@ -175,7 +175,7 @@ export interface SettleInput {
   /** The model the API reports it used (differs from requestedModel after a fallback). */
   model: string;
   /** null if the call failed before any tokens were used. */
-  usage: ApiUsage | null;
+  usage: ApiUsageWithIterations | null;
   status: Exclude<UsageStatus, "BLOCKED">;
   errorCode?: string | null;
   durationMs: number;
@@ -195,7 +195,9 @@ export interface SettleResult {
  */
 export async function settle(db: Db, input: SettleInput): Promise<SettleResult> {
   const now = input.now ?? new Date();
-  const priced = input.usage ? calculateCostSafe(input.model, input.usage) : null;
+  const priced = input.usage
+    ? calculateRequestCost(input.requestedModel, input.model, input.usage)
+    : null;
   const cost = priced ? roundForStorage(priced.total) : money(0);
 
   return db.$transaction(async (tx) => {
@@ -225,7 +227,6 @@ export async function settle(db: Db, input: SettleInput): Promise<SettleResult> 
       };
     }
 
-    const u = input.usage;
     const event = await tx.usageEvent.create({
       data: {
         userId: found.userId,
@@ -233,11 +234,11 @@ export async function settle(db: Db, input: SettleInput): Promise<SettleResult> 
         conversationId: input.conversationId ?? null,
         requestedModel: input.requestedModel,
         model: input.model,
-        inputTokens: u?.input_tokens ?? 0,
-        outputTokens: u?.output_tokens ?? 0,
-        cacheCreationTokens: u?.cache_creation_input_tokens ?? 0,
-        cacheReadTokens: u?.cache_read_input_tokens ?? 0,
-        webSearchCount: u?.server_tool_use?.web_search_requests ?? 0,
+        inputTokens: priced?.inputTokens ?? 0,
+        outputTokens: priced?.outputTokens ?? 0,
+        cacheCreationTokens: priced?.cacheCreationTokens ?? 0,
+        cacheReadTokens: priced?.cacheReadTokens ?? 0,
+        webSearchCount: priced?.webSearches ?? 0,
         costUsd: cost.toString(),
         status: input.status,
         errorCode: input.errorCode ?? null,
