@@ -22,6 +22,7 @@ async function main() {
     user: "postgres",
     password: "postgres",
     persistent: false,
+    autoRehydrateSymlinks: true,
     onLog: () => {},
     onError: () => {},
   });

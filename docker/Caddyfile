@@ -1,0 +1,18 @@
+# Caddy gets and renews the HTTPS certificate for $DOMAIN automatically (Let's Encrypt).
+# The domain's DNS "A" record must point at this server, and ports 80 and 443 must be open.
+{$DOMAIN} {
+	encode zstd gzip
+
+	# Browsers must always use HTTPS for this site from now on.
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+
+	# Up to 5 files of 20 MB each per message, plus the form itself.
+	request_body {
+		max_size 110MB
+	}
+
+	# Streams replies to the browser as they arrive. Caddy replaces any X-Forwarded-For
+	# sent by the visitor with their real address, which the portal uses for rate limits.
+	# No access log is written, so no request URLs are stored on disk.
+	reverse_proxy app:3000
+}

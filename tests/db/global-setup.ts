@@ -39,6 +39,7 @@ export default async function setup(project: TestProject) {
       user: "postgres",
       password: "postgres",
       persistent: false,
+      autoRehydrateSymlinks: true,
       onLog: () => {},
       onError: () => {},
     });
